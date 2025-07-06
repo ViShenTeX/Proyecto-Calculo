@@ -1,0 +1,91 @@
+{% extends 'index.html' %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8">
+    <div class="bg-gray-800 rounded-lg shadow-lg overflow-hidden">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 p-8">
+            <!-- Imagen del producto -->
+            <div class="relative">
+                <img src="{{ suplemento.imagenes.url }}" 
+                     alt="{{ suplemento.nombre }}" 
+                     class="w-full h-96 object-contain rounded-lg">
+                
+                {% if suplemento.oferta %}
+                    <div class="absolute top-0 right-0 bg-red-600 text-white px-4 py-2 rounded-bl-lg">
+                        OFERTA
+                    </div>
+                {% endif %}
+            </div>
+
+            <!-- Información del producto -->
+            <div class="space-y-6">
+                <div>
+                    <h1 class="text-3xl font-bold text-white mb-2">{{ suplemento.nombre }}</h1>
+                    <p class="text-gray-400">{{ suplemento.descripcion }}</p>
+                </div>
+
+                <div class="space-y-4">
+                    <div class="flex items-center space-x-4">
+                        <span class="text-gray-400">Categoría:</span>
+                        <span class="text-white">{{ suplemento.categoria.nombreCategoria }}</span>
+                    </div>
+
+                    <div class="flex items-center space-x-4">
+                        <span class="text-gray-400">Disponibilidad:</span>
+                        <span class="text-white">{{ suplemento.disponibilidad }} unidades</span>
+                    </div>
+
+                    <div class="flex items-center space-x-4">
+                        <span class="text-gray-400">Unidades Vendidas:</span>
+                        <span class="text-white">{{ suplemento.unidadesVendidas }}</span>
+                    </div>
+                </div>
+
+                <div class="border-t border-gray-700 pt-6">
+                    {% if suplemento.oferta %}
+                        <div class="space-y-2">
+                            <p class="text-gray-400 line-through">Precio original: ${{ suplemento.precio }}</p>
+                            <p class="text-green-400 text-2xl font-bold">
+                                Precio con descuento: ${{ suplemento.precio_descuento|floatformat:0 }}
+                            </p>
+                            <p class="text-green-400">Descuento: -{{ suplemento.ofertaPorcentaje }}%</p>
+                        </div>
+                    {% else %}
+                        <p class="text-2xl font-bold text-white">${{ suplemento.precio }}</p>
+                    {% endif %}
+                </div>
+
+                <div class="pt-6">
+                    {% if suplemento.disponibilidad > 0 %}
+                        <form method="post" action="{% url 'agregar_al_carrito' suplemento.id %}" class="space-y-4">
+                            {% csrf_token %}
+                            <div class="flex items-center space-x-4">
+                                <label for="cantidad" class="text-gray-400">Cantidad:</label>
+                                <input type="number" 
+                                       name="cantidad" 
+                                       id="cantidad" 
+                                       value="1" 
+                                       min="1" 
+                                       max="{{ suplemento.disponibilidad }}"
+                                       class="w-20 bg-gray-700 text-white rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-400">
+                            </div>
+                            <button type="submit" 
+                                    class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition duration-300 flex items-center justify-center">
+                                <i class="bi bi-cart-plus mr-2"></i>
+                                Agregar al Carrito
+                            </button>
+                        </form>
+                    {% else %}
+                        <div class="text-center">
+                            <div class="bg-gray-600 text-white px-4 py-2 rounded-lg inline-block mb-4">
+                                Producto Agotado
+                            </div>
+                            <p class="text-gray-400">Este producto no está disponible actualmente</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
