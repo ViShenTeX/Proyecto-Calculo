@@ -14,7 +14,6 @@ import sys
 warnings.filterwarnings('ignore')
 plt.style.use('dark_background')
 
-
 ENDPOINT_USUARIOS = 'http://127.0.0.1:8000/api/usuarios/anonimos/'
 
 intervalo_graficos = 1000  # ms

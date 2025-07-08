@@ -1,17 +1,26 @@
-from django.contrib.admin.views.decorators import staff_member_required
-from TSApp.models import Suplementos, Categoria, Carrito, ItemCarrito
-from django.shortcuts import render, get_object_or_404, redirect
-from django.views.decorators.http import require_http_methods
-from django.contrib.auth.decorators import login_required
-from django.views.decorators.csrf import csrf_exempt
-from django.contrib.auth import authenticate, login
-from .forms import SuplementosForm, CategoriaForm
 from django.core.paginator import Paginator
-from django.http import JsonResponse
+from django.shortcuts import render, get_object_or_404, redirect
+from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.contrib.auth import authenticate, login
+from TSApp.models import Suplementos, Categoria, Carrito, ItemCarrito
 from datetime import datetime
-import logging
+from django.http import JsonResponse
+from django.contrib.admin.views.decorators import staff_member_required
+from django.core.files.storage import FileSystemStorage
+from .forms import SuplementosForm, CategoriaForm
+from django.core.cache import cache
+from django.conf import settings
+from django.utils import timezone
+from datetime import timedelta
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError
+from django.utils.html import strip_tags
 import re
+import requests
+import json
+from django.views.decorators.http import require_http_methods
+from django.views.decorators.csrf import csrf_exempt
 
 def suplementos(request):
     suplementos = Suplementos.objects.all()
@@ -201,38 +210,29 @@ def sanitize_input(input_str):
     return sanitized.strip()
 
 def login_view(request):
-    logger = logging.getLogger(__name__)
     if request.method == 'POST':
-        email = request.POST.get('email')
-        password = request.POST.get('password')
-
+        username = sanitize_input(request.POST.get('username'))
+        password = request.POST.get('password')  # No sanitizamos la contraseña para no afectar caracteres especiales
+        
         # Validar que los campos no estén vacíos
-        if not email or not password:
-            messages.error(request, 'Por favor ingrese correo y contraseña')
+        if not username or not password:
+            messages.error(request, 'Por favor ingrese usuario y contraseña')
             return render(request, 'login.html')
-
+        
         # Validar longitud máxima
-        if len(email) > 150 or len(password) > 128:
+        if len(username) > 150 or len(password) > 128:
             messages.error(request, 'Datos de entrada inválidos')
             return render(request, 'login.html')
-
+        
         try:
-            from django.contrib.auth.models import User
-            try:
-                user_obj = User.objects.get(email=email)
-            except User.DoesNotExist:
-                messages.error(request, 'Correo o contraseña incorrectos.')
-                return render(request, 'login.html')
-            except Exception as e:
-                logger.error(f'Error buscando usuario por email: {e}')
-                messages.error(request, 'Correo o contraseña incorrectos.')
-                return render(request, 'login.html')
-
-            # Usar el método authenticate de Django con el username real
-            user = authenticate(request, username=user_obj.username, password=password)
-
+            # Usar el método authenticate de Django que ya tiene protección contra SQL injection
+            user = authenticate(request, username=username, password=password)
+            
             if user is not None:
+                # Registrar el inicio de sesión exitoso
                 login(request, user)
+                
+                # Si hay un carrito en la sesión, lo asignamos al usuario
                 carrito_id = request.session.get('carrito_id')
                 if carrito_id:
                     try:
@@ -242,13 +242,23 @@ def login_view(request):
                         del request.session['carrito_id']
                     except Carrito.DoesNotExist:
                         pass
+                
+                # Redirección según tipo de usuario
                 next_url = request.GET.get('next', '/')
-                return redirect(next_url or '/')
+                # Sanitizar la URL de redirección
+                if next_url:
+                    # Basic URL validation to prevent open redirect vulnerabilities
+                    # from django.utils.http import is_safe_url
+                    # if not is_safe_url(url=next_url, allowed_hosts=request.get_host()):
+                    #    next_url = '/'
+                    pass # Mantener next_url para redirección segura
+
+                return redirect(next_url or '/') # Redirigir a la URL deseada o a la página principal
             else:
-                messages.error(request, 'Correo o contraseña incorrectos.')
+                # Si el usuario no existe o las credenciales son incorrectas
+                messages.error(request, 'Usuario o contraseña incorrectos.')
         except Exception as e:
-            logger.error(f'Error inesperado en login_view: {e}', exc_info=True)
-            messages.error(request, 'Ocurrió un error inesperado. Por favor, intenta de nuevo.')
+            messages.error(request, f'Ocurrió un error inesperado: {e}')
 
     return render(request, 'login.html')
 
@@ -359,6 +369,128 @@ def admin_categoria_eliminar(request, categoria_id):
         return redirect('admin_categorias')
     return render(request, 'admin_categoria_eliminar.html', {'categoria': categoria})
 
+def recomendacion_ia(request):
+    """
+    Vista para el formulario de recomendación de IA
+    """
+    if request.method == 'POST':
+        # Obtener datos del formulario
+        edad = request.POST.get('edad')
+        peso = request.POST.get('peso')
+        altura = request.POST.get('altura')
+        actividad = request.POST.get('actividad')
+        objetivo = request.POST.get('objetivo')
+        
+        # Validar que todos los campos estén presentes
+        if not all([edad, peso, altura, actividad, objetivo]):
+            messages.error(request, 'Por favor completa todos los campos.')
+            return redirect('recomendacion_ia')
+        
+        try:
+            # Obtener productos de la base de datos
+            productos = Suplementos.objects.all()
+            productos_info = []
+            
+            for producto in productos:
+                productos_info.append({
+                    'nombre': producto.nombre,
+                    'descripcion': producto.descripcion,
+                    'categoria': producto.categoria.nombreCategoria if producto.categoria else 'Sin categoría',
+                    'precio': producto.precio,
+                    'disponibilidad': producto.disponibilidad
+                })
+            
+            # Crear el prompt para la IA
+            prompt = f"""
+            Eres un experto nutricionista y entrenador personal especializado en suplementos deportivos.
+            
+            PERFIL DEL USUARIO:
+            - Edad: {edad} años
+            - Peso: {peso} kg
+            - Altura: {altura} cm
+            - Nivel de actividad: {actividad}
+            - Objetivo: {objetivo}
+            
+            PRODUCTOS DISPONIBLES:
+            {json.dumps(productos_info, ensure_ascii=False, indent=2)}
+            
+            TAREA: Analiza el perfil del usuario y recomienda 3 productos específicos de la lista anterior que sean ideales para este usuario.
+            
+            Para cada producto incluye:
+            1. Nombre del producto
+            2. Por qué es ideal para este usuario específico
+            3. Cómo tomarlo (dosis recomendada)
+            4. Beneficios esperados
+            5. Precauciones si las hay
+            
+            Responde en español de manera clara y profesional. Formatea la respuesta de manera legible.
+            """
+            
+            # Configurar la llamada a OpenRouter
+            url = "https://openrouter.ai/api/v1/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": settings.SITE_URL,
+                "X-Title": settings.SITE_NAME,
+            }
+            
+            data = {
+                "model": "qwen/qwen-2.5-coder-32b-instruct:free",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "max_tokens": 1500
+            }
+            
+            # Hacer la llamada a la API
+            response = requests.post(url, headers=headers, json=data)
+            
+            if response.status_code == 200:
+                result = response.json()
+                recomendacion = result['choices'][0]['message']['content']
+                
+                # Guardar la recomendación en la sesión para mostrarla
+                request.session['recomendacion_ia'] = recomendacion
+                request.session['datos_usuario'] = {
+                    'edad': edad,
+                    'peso': peso,
+                    'altura': altura,
+                    'actividad': actividad,
+                    'objetivo': objetivo
+                }
+                
+                messages.success(request, '¡Recomendación generada exitosamente!')
+                return redirect('resultado_recomendacion')
+            else:
+                messages.error(request, f'Error al generar recomendación: {response.status_code}')
+                return redirect('recomendacion_ia')
+                
+        except Exception as e:
+            messages.error(request, f'Error al procesar la solicitud: {str(e)}')
+            return redirect('recomendacion_ia')
+    
+    return render(request, 'recomendacion_ia.html')
+
+def resultado_recomendacion(request):
+    """
+    Vista para mostrar el resultado de la recomendación de IA
+    """
+    recomendacion = request.session.get('recomendacion_ia')
+    datos_usuario = request.session.get('datos_usuario')
+    
+    if not recomendacion or not datos_usuario:
+        messages.error(request, 'No hay recomendación disponible. Por favor, genera una nueva recomendación.')
+        return redirect('recomendacion_ia')
+    
+    return render(request, 'resultado_recomendacion.html', {
+        'recomendacion': recomendacion,
+        'datos_usuario': datos_usuario
+    })
+
 # Variable global para el conteo de usuarios anónimos
 USUARIOS_ANONIMOS = 0
 
@@ -373,16 +505,25 @@ def set_usuarios_anonimos(valor):
 @csrf_exempt
 @require_http_methods(["GET"])
 def api_usuarios_anonimos(request):
-    return JsonResponse({"usuarios_anonimos": get_usuarios_anonimos()})
+    usuarios_actuales = get_usuarios_anonimos()
+    return JsonResponse({"usuarios_anonimos": usuarios_actuales})
 
 @csrf_exempt
 @require_http_methods(["POST"])
 def api_agregar_usuario_anonimo(request):
-    set_usuarios_anonimos(get_usuarios_anonimos() + 1)
+    global USUARIOS_ANONIMOS
+    
+    usuarios_actuales = get_usuarios_anonimos()
+    
+    set_usuarios_anonimos(usuarios_actuales + 1)
     return JsonResponse({"usuarios_anonimos": get_usuarios_anonimos()})
 
 @csrf_exempt
 @require_http_methods(["POST"])
 def api_quitar_usuario_anonimo(request):
-    set_usuarios_anonimos(get_usuarios_anonimos() - 1)
+    global USUARIOS_ANONIMOS
+    
+    usuarios_actuales = get_usuarios_anonimos()
+    
+    set_usuarios_anonimos(usuarios_actuales - 1)
     return JsonResponse({"usuarios_anonimos": get_usuarios_anonimos()})

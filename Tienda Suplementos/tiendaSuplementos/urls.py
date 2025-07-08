@@ -18,6 +18,8 @@ urlpatterns = [
     path('login/', views.login_view, name='login'),
     path('logout/', LogoutView.as_view(next_page='/login/'), name='logout'),
     path('carrito/actualizar-cantidad-ajax/', views.actualizar_cantidad_ajax, name='actualizar_cantidad_ajax'),
+    path('recomendacion-ia/', views.recomendacion_ia, name='recomendacion_ia'),
+    path('resultado-recomendacion/', views.resultado_recomendacion, name='resultado_recomendacion'),
     path('admin-panel/', views.admin_panel, name='admin_panel'),
     path('admin-panel/suplementos/', views.admin_suplementos, name='admin_suplementos'),
     path('admin-panel/suplementos/nuevo/', views.admin_suplemento_nuevo, name='admin_suplemento_nuevo'),

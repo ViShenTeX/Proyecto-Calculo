@@ -1,9 +1,8 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import messagebox
 import requests
 import threading
 import time
-from datetime import datetime
 
 ENDPOINT_USUARIOS = 'http://127.0.0.1:8000/api/usuarios/anonimos/'
 ENDPOINT_AGREGAR = 'http://127.0.0.1:8000/api/usuarios/anonimos/agregar/'
@@ -14,7 +13,7 @@ class SimuladorUsuarios:
         self.root = tk.Tk()
         self.root.title("Simulador Automático de Carga de Usuarios")
         self.root.configure(bg='#1a1a1a')
-        self.root.geometry("600x450")
+        self.root.geometry("600x500")
         self.root.resizable(False, False)
         
         # --- Variables de estado ---
@@ -55,73 +54,21 @@ class SimuladorUsuarios:
         tk.Label(controles_frame, text="Control de Simulación:", 
                  font=("Helvetica", 12, "bold"), bg='#2d2d2d', fg="#ff9800").pack(anchor='w')
         
-        self.btn_control = tk.Button(controles_frame, text="Iniciar Simulación Automática", font=("Helvetica", 11, "bold"),
-                                     bg='#4CAF50', fg='white', command=self.toggle_simulacion,
-                                     padx=15, pady=10)
-        self.btn_control.pack(pady=(10, 10), fill='x')
+        # Botón para aumentar usuarios manualmente (ahora inicia/detiene ciclo automático de aumento)
+        self.btn_agregar = tk.Button(controles_frame, text="Iniciar Aumento Automático (+)", font=("Helvetica", 10, "bold"),
+                                     bg='#388e3c', fg='white', command=self.toggle_aumentar,
+                                     padx=10, pady=6)
+        self.btn_agregar.pack(pady=(10, 5), fill='x')
+
+        # Botón para disminuir usuarios manualmente (ahora inicia/detiene ciclo automático de disminución)
+        self.btn_quitar = tk.Button(controles_frame, text="Iniciar Disminución Automática (-)", font=("Helvetica", 10, "bold"),
+                                    bg='#d32f2f', fg='white', command=self.toggle_disminuir,
+                                    padx=10, pady=6)
+        self.btn_quitar.pack(pady=(0, 10), fill='x')
         
         tk.Label(controles_frame, textvariable=self.estado_simulacion_var,
                  font=("Consolas", 11, "italic"), bg='#2d2d2d', fg="white").pack(anchor='w')
 
-    def toggle_simulacion(self):
-        self.simulacion_activa = not self.simulacion_activa
-        
-        if self.simulacion_activa:
-            self.btn_control.config(text="Pausar Simulación", bg='#f44336')
-       
-            if self.thread_simulacion is None or not self.thread_simulacion.is_alive():
-                self.thread_simulacion = threading.Thread(target=self.ejecutar_ciclo_automatico, daemon=True)
-                self.thread_simulacion.start()
-        else:
-            self.btn_control.config(text="Iniciar Simulación Automática", bg='#4CAF50')
-            self.estado_simulacion_var.set("Simulación en pausa...")
-
-    def ejecutar_ciclo_automatico(self):
-        direccion = "subiendo"
-        
-        while True:
-            if not self.simulacion_activa:
-             
-                time.sleep(1)
-                continue
-
-            try:
-                usuarios_actuales = self.obtener_usuarios_actuales()
-                
-                if direccion == "subiendo":
-                    self.estado_simulacion_var.set(f"Agregando usuarios... (Actual: {usuarios_actuales})")
-                    response = requests.post(ENDPOINT_AGREGAR, timeout=2)
-                    if response.status_code != 200:
-                        print("Error al agregar usuario, pausando.")
-                        self.simulacion_activa = False 
-                    if usuarios_actuales >= 90:
-                        direccion = "bajando"
-
-                elif direccion == "bajando":
-                    self.estado_simulacion_var.set(f"Quitando usuarios... (Actual: {usuarios_actuales})")
-                    response = requests.post(ENDPOINT_QUITAR, timeout=2)
-                    if response.status_code != 200:
-                        print("Error al quitar usuario, pausando.")
-                        self.simulacion_activa = False #
-                    if usuarios_actuales <= 5:
-                        direccion = "subiendo"
-                
-                time.sleep(0.2) 
-
-            except Exception as e:
-                print(f"Error en el ciclo de simulación: {e}. Pausando.")
-                self.simulacion_activa = False
-
-    def obtener_usuarios_actuales(self):
-        try:
-            response = requests.get(ENDPOINT_USUARIOS, timeout=2)
-            if response.status_code == 200:
-                data = response.json()
-                return data.get('usuarios_anonimos', 0)
-            return 0
-        except Exception:
-            return 0
-    
     def monitorear_conexion_loop(self):
         while True:
             try:
@@ -144,6 +91,70 @@ class SimuladorUsuarios:
     
     def ejecutar(self):
         self.root.mainloop()
+
+    def toggle_aumentar(self):
+        if hasattr(self, 'accion_actual') and self.accion_actual == 'aumentar':
+            # Si ya está aumentando, detener
+            self.accion_actual = None
+            self.simulacion_activa = False
+            self.btn_agregar.config(text="Iniciar Aumento Automático (+)", bg='#388e3c')
+            self.estado_simulacion_var.set("Aumento detenido.")
+        else:
+            # Si estaba disminuyendo, detener ese hilo
+            self.simulacion_activa = False
+            self.accion_actual = 'aumentar'
+            self.btn_agregar.config(text="Detener Aumento Automático", bg='#f44336')
+            self.btn_quitar.config(text="Iniciar Disminución Automática (-)", bg='#d32f2f')
+            self.estado_simulacion_var.set("Aumentando usuarios automáticamente...")
+            threading.Thread(target=self.ciclo_aumentar, daemon=True).start()
+
+    def toggle_disminuir(self):
+        if hasattr(self, 'accion_actual') and self.accion_actual == 'disminuir':
+            # Si ya está disminuyendo, detener
+            self.accion_actual = None
+            self.simulacion_activa = False
+            self.btn_quitar.config(text="Iniciar Disminución Automática (-)", bg='#d32f2f')
+            self.estado_simulacion_var.set("Disminución detenida.")
+        else:
+            # Si estaba aumentando, detener ese hilo
+            self.simulacion_activa = False
+            self.accion_actual = 'disminuir'
+            self.btn_quitar.config(text="Detener Disminución Automática", bg='#f44336')
+            self.btn_agregar.config(text="Iniciar Aumento Automático (+)", bg='#388e3c')
+            self.estado_simulacion_var.set("Disminuyendo usuarios automáticamente...")
+            threading.Thread(target=self.ciclo_disminuir, daemon=True).start()
+
+    def ciclo_aumentar(self):
+        self.simulacion_activa = True
+        while self.simulacion_activa and getattr(self, 'accion_actual', None) == 'aumentar':
+            try:
+                response = requests.post(ENDPOINT_AGREGAR, timeout=2)
+                if response.status_code != 200:
+                    self.estado_simulacion_var.set("Error al aumentar usuario. Deteniendo.")
+                    break
+            except Exception as e:
+                self.estado_simulacion_var.set(f"Error: {e}. Deteniendo.")
+                break
+            time.sleep(0.2)  # velocidad de aumento
+        self.simulacion_activa = False
+        self.btn_agregar.config(text="Iniciar Aumento Automático (+)", bg='#388e3c')
+        self.accion_actual = None
+
+    def ciclo_disminuir(self):
+        self.simulacion_activa = True
+        while self.simulacion_activa and getattr(self, 'accion_actual', None) == 'disminuir':
+            try:
+                response = requests.post(ENDPOINT_QUITAR, timeout=2)
+                if response.status_code != 200:
+                    self.estado_simulacion_var.set("Error al disminuir usuario. Deteniendo.")
+                    break
+            except Exception as e:
+                self.estado_simulacion_var.set(f"Error: {e}. Deteniendo.")
+                break
+            time.sleep(0.2)  # velocidad igualada a la de aumento
+        self.simulacion_activa = False
+        self.btn_quitar.config(text="Iniciar Disminución Automática (-)", bg='#d32f2f')
+        self.accion_actual = None
 
 if __name__ == "__main__":
     app = SimuladorUsuarios()
